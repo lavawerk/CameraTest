@@ -1,8 +1,11 @@
 package com.isafemobile.cameratest;
 
 import android.Manifest;
+import android.app.Activity;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.hardware.Camera;
@@ -21,17 +24,25 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.documentfile.provider.DocumentFile;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.Objects;
 
 public class MainActivity extends AppCompatActivity implements SurfaceHolder.Callback {
 
@@ -40,6 +51,10 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     private SurfaceHolder mSurfaceHolder;
     private MediaRecorder mMediaRecorder;
     private boolean isRecording = false;
+
+    private ActivityResultLauncher<Intent> launcher; // Initialise this object in Activity.onCreate()
+    private Uri baseDocumentTreeUri;
+    String filePath;
 
     private static final String TAG = "IsafeCameratest";
 
@@ -57,17 +72,47 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         mSurfaceHolder.addCallback(this);
 
         Button captureButton = findViewById(R.id.captureButton);
+        SharedPreferences preferences = getSharedPreferences("com.isafemobile.cameratest", Context.MODE_PRIVATE);
+        String filestorageuri = preferences.getString("filestorageuri", null);
+        baseDocumentTreeUri = filestorageuri != null ? Uri.parse(filestorageuri) : null;
+        Log.d(TAG, "onCreate, baseDocumentTreeUri is " + baseDocumentTreeUri);
         captureButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 if (isRecording) {
                     stopRecording();
                 } else {
-                    startRecording();
+                    if (baseDocumentTreeUri == null) {
+                        launchBaseDirectoryPicker();
+                    } else {
+                        startRecording();
+                    }
                 }
             }
         });
         requestPermissions();
+
+        // You can do the assignment inside onAttach or onCreate, i.e, before the activity is displayed
+        launcher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == Activity.RESULT_OK) {
+                    baseDocumentTreeUri = Objects.requireNonNull(result.getData()).getData();
+                    final int takeFlags = (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    // take persistable Uri Permission for future use
+                    getContentResolver().takePersistableUriPermission(result.getData().getData(), takeFlags);
+                    preferences.edit().putString("filestorageuri", result.getData().getData().toString()).apply();
+                    Log.d(TAG, "ActivityResult, baseDocumentTreeUri is " + baseDocumentTreeUri.getPath());
+                    startRecording();
+                } else {
+                    Log.e("FileUtility", "Some Error Occurred : " + result);
+                }
+            }
+        );
+    }
+
+    public void launchBaseDirectoryPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        launcher.launch(intent);
     }
 
     private void requestPermissions() {
@@ -82,103 +127,8 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         }
     }
 
-    public  static File getOutputMediaFile(){
-        // To be safe, you should check that the SDCard is mounted
-        // using Environment.getExternalStorageState() before doing this.
-        if (!Environment.getExternalStorageState().equalsIgnoreCase(Environment.MEDIA_MOUNTED)) {
-            return  null;
-        }
-
-        File mediaStorageDir = new File(Environment.getExternalStoragePublicDirectory(
-                Environment.DIRECTORY_PICTURES), "CameraSample");
-        // This location works best if you want the created images to be shared
-        // between applications and persist after your app has been uninstalled.
-
-        // Create the storage directory if it does not exist
-        if (!mediaStorageDir.exists()){
-            if (!mediaStorageDir.mkdirs()) {
-                Log.d(TAG, "failed to create directory " + mediaStorageDir.getPath());
-                return null;
-            }
-        }
-
-        // Create a media file name
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        File mediaFile = new File(mediaStorageDir.getPath() + File.separator +
-                    "VID_"+ timeStamp + ".mp4");
-        Log.d(TAG, "mediaFile is " + mediaFile.getPath());
-        return mediaFile;
-    }
-/*
-    private File getOutputMediaFile() {
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
-        //File mediaStorageDir = new File(Environment.getExternalStoragePublicDirectory(
-        //        Environment.DIRECTORY_DCIM), "Camera");
-        File mediaStorageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-
-        //File mediaStorageDir = this.getFilesDir();
-        if (mediaStorageDir == null) {
-            Log.e(TAG, "mediaStorageDir is null!");
-            return null;
-        } else if (!mediaStorageDir.exists()) {
-            if (!mediaStorageDir.mkdirs()) {
-                Log.e(TAG, "Can't create dir!" + mediaStorageDir);
-                return null;
-            }
-        }
-        File videoFile = new File(mediaStorageDir.getPath() + File.separator +
-                "VID_" + timeStamp + ".mp4");
-        Log.d(TAG, "our video is named: " + videoFile.getPath());
-        return videoFile;
-    }*/
-/*
-    private Uri getOutputMediaFileUri() {
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
-
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Video.Media.DISPLAY_NAME, "VID_" + timeStamp);
-        values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
-        values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/Camera");
-
-        // Insert the video file into MediaStore and get the Uri
-        Uri videoUri = getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
-
-        // Query MediaStore to get the actual file path corresponding to the Uri
-        String[] projection = {MediaStore.Video.Media.DATA};
-        Cursor cursor = getContentResolver().query(videoUri, projection, null, null, null);
-        if (cursor != null && cursor.moveToFirst()) {
-            int columnIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA);
-            String filePath = cursor.getString(columnIndex);
-            cursor.close();
-            return Uri.parse(filePath);
-        }
-
-        return null;
-    }
-*/
-private Uri getOutputMediaFileUri() {
-    String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
-
-    ContentValues values = new ContentValues();
-    values.put(MediaStore.Video.Media.DISPLAY_NAME, "VID_" + timeStamp);
-    values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
-    values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/Camera");
-
-    Uri uri = getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
-
-    String[] projection = {MediaStore.Video.Media.DATA};
-    Cursor cursor = getContentResolver().query(uri, projection, null, null, null);
-    if (cursor != null && cursor.moveToFirst()) {
-        int columnIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA);
-        String filePath = cursor.getString(columnIndex);
-        cursor.close();
-        return Uri.parse(filePath);
-    } else {
-        return uri;
-    }
-}
-
     private void startRecording() {
+        Log.d(TAG, "startRecording");
         if (mCamera == null) {
             return;
         }
@@ -191,8 +141,29 @@ private Uri getOutputMediaFileUri() {
         mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.CAMERA);
 
         mMediaRecorder.setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH));
-        mMediaRecorder.setOutputFile(fileName);
-        //mMediaRecorder.setOutputFile(getOutputMediaFile().toString());
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+
+        // Retrieve the DocumentFile instance for the baseDocumentTreeUri
+        DocumentFile baseDocumentTree = DocumentFile.fromTreeUri(this, baseDocumentTreeUri);
+
+        // Create a directory named "Videos" if it doesn't exist
+        DocumentFile videosDir = baseDocumentTree.createDirectory("Videos");
+        // Create the video file
+        String fileName = "VID_" + timeStamp + ".mp4";
+        DocumentFile videoDocumentFile = videosDir.createFile("video/mp4", fileName);
+        // Get the content URI for the created video file
+        Uri videoUri = videoDocumentFile.getUri();
+
+        // Get the file descriptor for the video file
+        ParcelFileDescriptor pfd;
+        try {
+            pfd = getContentResolver().openFileDescriptor(videoUri, "rw");
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+            return;
+        }
+
+        mMediaRecorder.setOutputFile(pfd.getFileDescriptor());
         mMediaRecorder.setPreviewDisplay(mSurfaceHolder.getSurface());
 
         try {
@@ -324,10 +295,12 @@ private Uri getOutputMediaFileUri() {
     }
 
     private void requestStoragePermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
-            }, REQUEST_WRITE_EXTERNAL_STORAGE_PERMISSION);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                }, REQUEST_WRITE_EXTERNAL_STORAGE_PERMISSION);
+            }
         }
     }
 }
