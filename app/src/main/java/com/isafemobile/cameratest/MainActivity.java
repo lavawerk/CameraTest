@@ -90,6 +90,19 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
                 }
             }
         });
+
+        Button captureImageButton = findViewById(R.id.captureImageButton);
+        captureImageButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (baseDocumentTreeUri == null) {
+                    launchBaseDirectoryPicker();
+                } else {
+                    captureImage();
+                }
+            }
+        });
+
         requestPermissions();
 
         // You can do the assignment inside onAttach or onCreate, i.e, before the activity is displayed
@@ -124,6 +137,51 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
                     Manifest.permission.RECORD_AUDIO,
                     Manifest.permission.WRITE_EXTERNAL_STORAGE
             }, REQUEST_CAMERA_PERMISSION);
+        }
+    }
+
+    private void captureImage() {
+        if (mCamera != null) {
+            mCamera.takePicture(null, null, pictureCallback);
+        }
+    }
+
+    Camera.PictureCallback pictureCallback = new Camera.PictureCallback() {
+        @Override
+        public void onPictureTaken(byte[] data, Camera camera) {
+            if (data != null) {
+                saveImage(data);
+            }
+            // Restart the preview after capturing the image
+            mCamera.startPreview();
+        }
+    };
+
+    private void saveImage(byte[] data) {
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+
+        // Retrieve the DocumentFile instance for the baseDocumentTreeUri
+        DocumentFile baseDocumentTree = DocumentFile.fromTreeUri(this, baseDocumentTreeUri);
+
+        // Create a directory named "Images" if it doesn't exist
+        DocumentFile imagesDir = baseDocumentTree.createDirectory("Images");
+
+        // Create the image file
+        String fileName = "IMG_" + timeStamp + ".jpg";
+        DocumentFile imageDocumentFile = imagesDir.createFile("image/jpeg", fileName);
+
+        // Get the content URI for the created image file
+        Uri imageUri = imageDocumentFile.getUri();
+
+        try {
+            // Write the image data to the output stream
+            OutputStream outputStream = getContentResolver().openOutputStream(imageUri);
+            outputStream.write(data);
+            outputStream.close();
+            Toast.makeText(MainActivity.this, "Image saved successfully", Toast.LENGTH_SHORT).show();
+        } catch (IOException e) {
+            e.printStackTrace();
+            Toast.makeText(MainActivity.this, "Failed to save image", Toast.LENGTH_SHORT).show();
         }
     }
 
