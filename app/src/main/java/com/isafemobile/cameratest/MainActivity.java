@@ -40,7 +40,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
@@ -57,10 +59,16 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     String filePath;
 
     private static final String TAG = "IsafeCameratest";
+    private String timeStamp;
 
     private static final int REQUEST_CAMERA_PERMISSION = 200;
     private static final int REQUEST_RECORD_AUDIO_PERMISSION = 201;
     private static final int REQUEST_WRITE_EXTERNAL_STORAGE_PERMISSION = 202;
+
+    private static final List<String> CAMERA_CANDIDATES = new ArrayList<>();
+    static {
+        CAMERA_CANDIDATES.add("net.sourceforge.opencamera");
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -140,10 +148,65 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         }
     }
 
+    Uri getImageUri() {
+        // Retrieve the DocumentFile instance for the baseDocumentTreeUri
+        DocumentFile baseDocumentTree = DocumentFile.fromTreeUri(this, baseDocumentTreeUri);
+
+        // Create a directory named "Images" if it doesn't exist
+        DocumentFile imagesDir = baseDocumentTree.createDirectory("Images");
+
+        // Create the image file
+        String fileName = "IMG_" + timeStamp + ".jpg";
+        DocumentFile imageDocumentFile = imagesDir.createFile("image/jpeg", fileName);
+
+        // Get the content URI for the created image file
+        return imageDocumentFile.getUri();
+    }
+
+    private Intent enhanceCameraIntent(Context context, Intent baseIntent) {
+        PackageManager pm = context.getPackageManager();
+        List<Intent> cameraIntents = new ArrayList<>();
+
+        for (String candidate : CAMERA_CANDIDATES) {
+            Log.d(TAG, "candidate " + candidate + " installed? " + isPackageInstalled(candidate, pm));
+            Intent intent = new Intent(baseIntent).setPackage(candidate);
+            if (!pm.queryIntentActivities(intent, 0).isEmpty()) {
+                cameraIntents.add(intent);
+            }
+        }
+
+        Intent chooserIntent = Intent.createChooser(baseIntent, "select Camera");
+        chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, cameraIntents.toArray(new Intent[0]));
+        return chooserIntent;
+    }
+
+    private boolean isPackageInstalled(String packageName, PackageManager pm) {
+        try {
+            pm.getPackageInfo(packageName, PackageManager.GET_ACTIVITIES);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
     private void captureImage() {
+        timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        intent.putExtra(MediaStore.EXTRA_OUTPUT, getImageUri());
+        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        Intent cameraIntent = enhanceCameraIntent(this, intent);
+        this.startActivityForResult(cameraIntent, 666);
+
+/*
         if (mCamera != null) {
             mCamera.takePicture(null, null, pictureCallback);
-        }
+        }*/
+    }
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent intent) {
+        Log.d(TAG, "onActivityResult, requestCode: " + requestCode + " resultCode: " + resultCode + " intent: " + intent);
+        super.onActivityResult(requestCode, resultCode, intent);
     }
 
     Camera.PictureCallback pictureCallback = new Camera.PictureCallback() {
@@ -158,20 +221,8 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     };
 
     private void saveImage(byte[] data) {
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
-
-        // Retrieve the DocumentFile instance for the baseDocumentTreeUri
-        DocumentFile baseDocumentTree = DocumentFile.fromTreeUri(this, baseDocumentTreeUri);
-
-        // Create a directory named "Images" if it doesn't exist
-        DocumentFile imagesDir = baseDocumentTree.createDirectory("Images");
-
-        // Create the image file
-        String fileName = "IMG_" + timeStamp + ".jpg";
-        DocumentFile imageDocumentFile = imagesDir.createFile("image/jpeg", fileName);
-
         // Get the content URI for the created image file
-        Uri imageUri = imageDocumentFile.getUri();
+        Uri imageUri = getImageUri();
 
         try {
             // Write the image data to the output stream
