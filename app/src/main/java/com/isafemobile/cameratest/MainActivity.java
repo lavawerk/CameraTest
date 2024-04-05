@@ -9,6 +9,9 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.hardware.Camera;
+import android.hardware.camera2.CameraAccessException;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
 import android.media.CamcorderProfile;
 import android.media.MediaRecorder;
 import android.net.Uri;
@@ -18,9 +21,12 @@ import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.view.Display;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.Toast;
 
@@ -69,6 +75,8 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     static {
         CAMERA_CANDIDATES.add("net.sourceforge.opencamera");
     }
+
+    private CameraCharacteristics mCameraCharacteristics;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -330,6 +338,65 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         } catch (IOException e) {
             e.printStackTrace();
         }
+        CameraManager cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+        try {
+            for (String cameraId : cameraManager.getCameraIdList()) {
+                CameraCharacteristics cameraCharacteristics = cameraManager.getCameraCharacteristics(cameraId);
+                if (cameraCharacteristics.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT) {
+                    // don't care about front facing camera
+                    continue;
+                }
+                mCameraCharacteristics = cameraCharacteristics;
+            }
+        } catch (CameraAccessException e) {
+            //
+        }
+    }
+
+        public static Camera.Size getOptimalPreviewSize(List<Camera.Size> sizes, int w, int h) {
+        final double ASPECT_TOLERANCE = 0.1;
+        double targetRatio=(double)h / w;
+        if (sizes == null) return null;
+
+        Camera.Size optimalSize = null;
+        double minDiff = Double.MAX_VALUE;
+
+        int targetHeight = h;
+
+        for (Camera.Size size : sizes) {
+            double ratio = (double) size.width / size.height;
+            if (Math.abs(ratio - targetRatio) > ASPECT_TOLERANCE) continue;
+            if (Math.abs(size.height - targetHeight) < minDiff) {
+                optimalSize = size;
+                minDiff = Math.abs(size.height - targetHeight);
+            }
+        }
+
+        if (optimalSize == null) {
+            minDiff = Double.MAX_VALUE;
+            for (Camera.Size size : sizes) {
+                if (Math.abs(size.height - targetHeight) < minDiff) {
+                    optimalSize = size;
+                    minDiff = Math.abs(size.height - targetHeight);
+                }
+            }
+        }
+        return optimalSize;
+    }
+
+    public int computeRelativeRotation(
+            int surfaceRotationDegrees
+    ){
+        Integer sensorOrientationDegrees =
+                mCameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+
+        // Reverse device orientation for back-facing cameras.
+        int sign = mCameraCharacteristics.get(CameraCharacteristics.LENS_FACING) ==
+                CameraCharacteristics.LENS_FACING_BACK ? 1 : -1;
+
+        // Calculate desired orientation relative to camera orientation to make
+        // the image upright relative to the device orientation.
+        return (sensorOrientationDegrees - surfaceRotationDegrees * sign + 360) % 360;
     }
 
     @Override
@@ -343,6 +410,29 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
             e.printStackTrace();
         }
 
+        // set preview size and make any resize, rotate or
+        // reformatting changes here
+        Camera.Parameters parameters= mCamera.getParameters();
+        Display display = ((WindowManager)getSystemService(WINDOW_SERVICE)).getDefaultDisplay();
+
+        if(display.getRotation() == Surface.ROTATION_0) {
+            mCamera.setDisplayOrientation(computeRelativeRotation(0));
+        }
+
+        if(display.getRotation() == Surface.ROTATION_90) {
+            mCamera.setDisplayOrientation(computeRelativeRotation(90));
+        }
+
+        if(display.getRotation() == Surface.ROTATION_180) {
+            mCamera.setDisplayOrientation(computeRelativeRotation(180));
+        }
+        if(display.getRotation() == Surface.ROTATION_270) {
+            mCamera.setDisplayOrientation(computeRelativeRotation(270));
+        }
+
+        Camera.Size size=getOptimalPreviewSize(parameters.getSupportedPreviewSizes(), width, height);
+        parameters.setPreviewSize(size.width, size.height);
+        mCamera.setParameters(parameters);
         try {
             mCamera.setPreviewDisplay(mSurfaceHolder);
             mCamera.startPreview();
